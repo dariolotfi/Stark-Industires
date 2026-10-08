@@ -7,7 +7,7 @@
 3. **Approach** – drives toward the object, re-centering if it drifts off the blue, and stops when the object is right in front of the claw.
 4. **Grab** – opens the claw, creeps in slowly, and closes the claw (torque-limited so it squeezes without stalling forever), then lifts the arm.
 
-The routine stops all motors when the 30 seconds are up.
+The routine uses the full 30 seconds: if it loses the blue object or misses, it closes the claw, lowers the arm and starts over. A background timer stops every motor the moment 30 seconds are up, even mid-move. After a successful grab it keeps holding the object until time runs out.
 
 ## Setup
 

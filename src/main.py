@@ -160,6 +160,17 @@ def turn_to(target, speed):
     stop_drive()
 
 
+def move_motor_to(motor, degrees):
+    """Move the arm or claw to a position, but never past the 30 s limit."""
+    motor.spin_to_position(degrees, DEGREES, wait=False)
+    start = brain.timer.time(MSEC)
+    while not out_of_time() and not motor.is_done():
+        if brain.timer.time(MSEC) - start > 3000:   # stuck - don't wait forever
+            break
+        wait(10, MSEC)
+    motor.stop()
+
+
 def drive_distance(mm, speed):
     """Drive straight a set distance (negative mm = backwards)."""
     target = drive_position() + mm_to_wheel_degrees(mm)
@@ -200,7 +211,7 @@ def setup():
     wait(200, MSEC)
 
     # Put the arm at grabbing height and keep the claw closed while searching
-    arm.spin_to_position(ARM_GRAB_ANGLE, DEGREES, wait=True)
+    move_motor_to(arm, ARM_GRAB_ANGLE)
 
 
 def search_for_blue():
@@ -305,7 +316,7 @@ def small_sweep_for_blue():
 def open_claw():
     status("Opening claw...")
     claw.set_max_torque(100, PERCENT)
-    claw.spin_to_position(CLAW_OPEN_DEGREES, DEGREES, wait=True)
+    move_motor_to(claw, CLAW_OPEN_DEGREES)
 
 
 def creep_in():
@@ -329,7 +340,7 @@ def close_claw():
 
 def lift_arm():
     status("Lifting...")
-    arm.spin_to_position(ARM_LIFT_ANGLE, DEGREES, wait=True)
+    move_motor_to(arm, ARM_LIFT_ANGLE)
 
 
 def stop_everything():
@@ -338,42 +349,78 @@ def stop_everything():
     claw.stop()
 
 
+def reset_for_retry():
+    """Close the claw and put the arm back down before trying again."""
+    stop_drive()
+    claw.set_max_torque(100, PERCENT)
+    move_motor_to(claw, 0)
+    move_motor_to(arm, ARM_GRAB_ANGLE)
+
+
+def watchdog():
+    """Runs in the background: stops EVERYTHING the moment 30 s are up,
+    even if the robot is in the middle of a move."""
+    while not out_of_time():
+        wait(20, MSEC)
+    stop_everything()
+    status("Time's up!")
+
+
 # ===========================================================================
 #  AUTONOMOUS (30 seconds)
 # ===========================================================================
-def autonomous():
-    setup()
-
+def try_to_grab():
+    """One full attempt: find, line up, approach, grab. True if it grabbed."""
     if not search_for_blue():
-        status("No blue found :(")
-        stop_everything()
-        return
-
+        return False
     if not align_on_blue():
-        status("Could not line up")
-        stop_everything()
-        return
-
+        return False
     if not approach_blue():
-        status("Could not reach blue")
-        stop_everything()
-        return
+        return False
 
     # Final re-center right in front of the object before opening the claw
     if not sees_blue_confirmed():
         small_sweep_for_blue()
-    align_on_blue()
+    if not align_on_blue():
+        return False
 
     # 1) open the claw  2) creep in slowly  3) close the claw
     open_claw()
     creep_in()
     close_claw()
+    return not out_of_time()
 
-    if LIFT_AFTER_GRAB and not out_of_time():
-        lift_arm()
 
-    stop_drive()
-    status("Got it!")
+def autonomous():
+    setup()
+    Thread(watchdog)
+
+    # Keep trying for the whole 30 seconds - if something goes wrong
+    # (lost the blue, couldn't line up) reset and start over.
+    attempt = 1
+    grabbed = False
+    while not out_of_time():
+        status("Attempt %d" % attempt)
+        if try_to_grab():
+            grabbed = True
+            break
+        if out_of_time():
+            break
+        status("Missed - retrying")
+        reset_for_retry()
+        attempt += 1
+
+    if grabbed:
+        if LIFT_AFTER_GRAB:
+            lift_arm()
+        stop_drive()
+        status("Got it!")
+        # Keep squeezing the object until the 30 seconds are over
+        while not out_of_time():
+            wait(20, MSEC)
+
+    stop_everything()
+    status("Auton done")
 
 
 # ===========================================================================
