@@ -1,5 +1,8 @@
 # Stark Industries – VEX EXP Clawbot
 
+> **Don't paste this file into VEXcode** – it's instructions, not code.
+> The robot code is [`src/main.py`](https://raw.githubusercontent.com/dariolotfi/Stark-Industires/claude/eager-pascal-rhmqxo/src/main.py) – open that link, select all, copy, and paste it into an empty VEXcode EXP Python project.
+
 `src/main.py` is a VEXcode EXP **Python** program with a 30-second autonomous routine:
 
 1. **Open the claw.**
