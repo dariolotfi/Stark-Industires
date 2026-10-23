@@ -1,7 +1,11 @@
 # ---------------------------------------------------------------------------
 #  Stark Industries - VEX EXP Clawbot
-#  30-second autonomous: find a BLUE object with the optical sensor, line up
-#  on it, open the claw, creep in slowly, and close the claw on it.
+#  30-second autonomous:
+#    1. open the claw
+#    2. turn in place UNTIL the optical sensor sees a BLUE object
+#    3. stop, then drive straight at it
+#    4. stop when it's inside the claw, close the claw, and stop
+#  Everything stops at 30 seconds no matter what.
 #
 #  Written for VEXcode EXP (Python).  Paste into a new VEXcode EXP Python
 #  project, or open this file directly, and download it to the brain.
@@ -29,33 +33,32 @@ CLAW_REVERSED = False
 WHEEL_TRAVEL_MM = 200.0           # distance the wheel rolls in one full turn
 
 # Timing
-AUTON_TIME_LIMIT_S = 30.0         # total autonomous time
+AUTON_TIME_LIMIT_S = 30.0         # the autonomous can never run longer than this
 
 # Blue detection (optical sensor hue is 0-360; blue is roughly 190-250)
 BLUE_HUE_MIN = 190
 BLUE_HUE_MAX = 250
-MIN_BRIGHTNESS = 3                # ignore very dark readings (nothing in front)
+MIN_BRIGHTNESS = 5                # ignore dark readings (nothing in front of the sensor)
 CONFIRM_READINGS = 3              # readings in a row needed to trust "blue"
-NEAR_BRIGHTNESS = 30              # brightness when the object is right in front of the claw
-                                  # (watch the brain screen while testing and tune this)
 
-# Speeds (percent)
-SEARCH_TURN_SPEED = 15            # spin speed while scanning for blue
-ALIGN_TURN_SPEED = 10             # spin speed while finding the object's edges
-APPROACH_SPEED = 20               # drive speed toward the object
-CREEP_SPEED = 8                   # very slow speed once the claw is open
-ARM_SPEED = 40
-CLAW_SPEED = 40
+# Turning
+TURN_RIGHT = True                 # True = spin clockwise while searching, False = counter-clockwise
+SEARCH_TURN_SPEED = 15            # percent - slower spins stop closer to the object
+NUDGE_TURN_SPEED = 8              # percent - used to swing back if the robot coasts past the blue
 
-# Distances / angles
-SEARCH_STEP_MM = 150              # drive this far forward if a full spin finds nothing
-CREEP_DISTANCE_MM = 120           # how far to creep in so the object is inside the claw
-MAX_APPROACH_MM = 1000            # give up driving forward after this far
-ARM_GRAB_ANGLE = 0                # arm position (motor degrees) for grabbing - 0 = all the way down
-ARM_LIFT_ANGLE = 300              # arm position after grabbing (lift the object)
+# Driving
+DRIVE_SPEED = 25                  # percent - speed driving straight at the object
+EXTRA_DRIVE_MM = 0                # drive this much further AFTER the sensor says the object is
+                                  # close. Raise it if the robot stops before the object is
+                                  # between the claw fingers; keep 0 if it is already inside.
+EXTRA_DRIVE_SPEED = 10            # percent - speed for that extra bit
+MAX_DRIVE_MM = 1500               # give up driving straight after this far
+
+# Claw
 CLAW_OPEN_DEGREES = 90            # how far the claw motor turns to open
+CLAW_SPEED = 50                   # percent
 CLAW_GRIP_TORQUE = 50             # percent torque used to squeeze the object
-LIFT_AFTER_GRAB = True            # lift the arm after grabbing
+CLOSE_CLAW_AT_END = True          # close the claw on the object once the robot has stopped
 
 
 # ===========================================================================
@@ -87,8 +90,8 @@ def status(line):
     brain.screen.next_row()
     brain.screen.print("Time left: %.1f" % max(0, time_left()))
     brain.screen.next_row()
-    # handy for tuning BLUE_HUE_MIN/MAX and NEAR_BRIGHTNESS
-    brain.screen.print("Hue %d  Bright %d" % (optical.hue(), optical.brightness()))
+    # handy for tuning BLUE_HUE_MIN/MAX and MIN_BRIGHTNESS
+    brain.screen.print("Hue %d  Bright %d" % (int(optical.hue()), int(optical.brightness())))
 
 
 def mm_to_wheel_degrees(mm):
@@ -122,15 +125,8 @@ def drive_position():
     return (left_drive.position(DEGREES) + right_drive.position(DEGREES)) / 2.0
 
 
-def reset_drive_encoders():
-    left_drive.set_position(0, DEGREES)
-    right_drive.set_position(0, DEGREES)
-
-
 def sees_blue():
-    """One raw reading: is there a blue object right in front of the sensor?"""
-    if not optical.is_near_object():
-        return False
+    """One reading: is the sensor looking at something blue?"""
     if optical.brightness() < MIN_BRIGHTNESS:
         return False
     hue = optical.hue()
@@ -146,215 +142,21 @@ def sees_blue_confirmed():
     return True
 
 
-def turn_to(target, speed):
-    """Spin in place until turn_position() reaches target (wheel degrees)."""
-    tolerance = 3
-    while not out_of_time():
-        error = target - turn_position()
-        if abs(error) <= tolerance:
-            break
-        # slow down near the target so we don't overshoot
-        s = max(5, min(speed, abs(error) * 0.5))
-        turn(s if error > 0 else -s)
-        wait(10, MSEC)
-    stop_drive()
-
-
 def move_motor_to(motor, degrees):
-    """Move the arm or claw to a position, but never past the 30 s limit."""
+    """Move the claw to a position, but never past the 30 s limit."""
     motor.spin_to_position(degrees, DEGREES, wait=False)
     start = brain.timer.time(MSEC)
     while not out_of_time() and not motor.is_done():
-        if brain.timer.time(MSEC) - start > 3000:   # stuck - don't wait forever
+        if brain.timer.time(MSEC) - start > 2000:   # stuck - don't wait forever
             break
         wait(10, MSEC)
     motor.stop()
-
-
-def drive_distance(mm, speed):
-    """Drive straight a set distance (negative mm = backwards)."""
-    target = drive_position() + mm_to_wheel_degrees(mm)
-    direction = 1 if mm >= 0 else -1
-    while not out_of_time():
-        if (target - drive_position()) * direction <= 0:
-            break
-        drive(speed * direction)
-        wait(10, MSEC)
-    stop_drive()
-
-
-# ===========================================================================
-#  AUTONOMOUS STEPS
-# ===========================================================================
-def setup():
-    brain.timer.clear()
-
-    left_drive.set_stopping(BRAKE)
-    right_drive.set_stopping(BRAKE)
-    arm.set_stopping(HOLD)
-    claw.set_stopping(HOLD)
-
-    arm.set_velocity(ARM_SPEED, PERCENT)
-    claw.set_velocity(CLAW_SPEED, PERCENT)
-    claw.set_max_torque(CLAW_GRIP_TORQUE, PERCENT)
-    claw.set_timeout(2, SECONDS)   # never stall the claw forever
-    arm.set_timeout(3, SECONDS)
-
-    # The robot should START with the arm down and the claw closed.
-    arm.set_position(0, DEGREES)
-    claw.set_position(0, DEGREES)
-    reset_drive_encoders()
-
-    # Turn on the sensor's light so colors read the same in any room lighting
-    optical.set_light(LedStateType.ON)
-    optical.set_light_power(100, PERCENT)
-    wait(200, MSEC)
-
-    # Put the arm at grabbing height and keep the claw closed while searching
-    move_motor_to(arm, ARM_GRAB_ANGLE)
-
-
-def search_for_blue():
-    """Spin slowly until the sensor sees blue. If a full spin finds nothing,
-    drive forward a little and try again. Returns True when blue is found."""
-    status("Searching for blue...")
-    one_full_spin = mm_to_wheel_degrees(3.1416 * 180)  # ~ one robot rotation
-    while not out_of_time():
-        start = turn_position()
-        turn(SEARCH_TURN_SPEED)
-        while not out_of_time() and turn_position() - start < one_full_spin:
-            if sees_blue_confirmed():
-                stop_drive()
-                return True
-            wait(10, MSEC)
-        stop_drive()
-        # Nothing found this spin - move to a new spot and look again
-        status("Nothing found, moving...")
-        drive_distance(SEARCH_STEP_MM, APPROACH_SPEED)
-    stop_drive()
-    return False
-
-
-def find_edge(direction):
-    """Turn (direction 1 = right, -1 = left) until blue is lost.
-    Returns the turn position of that edge of the object."""
-    max_sweep = mm_to_wheel_degrees(150)   # safety: don't spin forever
-    start = turn_position()
-    turn(ALIGN_TURN_SPEED * direction)
-    lost_count = 0
-    edge = start
-    while not out_of_time() and abs(turn_position() - start) < max_sweep:
-        if sees_blue():
-            lost_count = 0
-            edge = turn_position()      # last spot that still saw blue
-        else:
-            lost_count += 1
-            if lost_count >= CONFIRM_READINGS:
-                break
-        wait(10, MSEC)
-    stop_drive()
-    wait(100, MSEC)
-    return edge
-
-
-def align_on_blue():
-    """Center the robot on the blue object: find its left edge, find its
-    right edge, then turn to exactly halfway between them."""
-    status("Lining up...")
-    left_edge = find_edge(-1)
-    right_edge = find_edge(1)
-    turn_to((left_edge + right_edge) / 2.0, ALIGN_TURN_SPEED)
-    wait(150, MSEC)  # let the robot settle
-    return sees_blue_confirmed()
-
-
-def approach_blue():
-    """Drive toward the object until it's right in front of the claw.
-    If we drift off the blue, stop and re-align."""
-    status("Approaching...")
-    start = drive_position()
-    max_degrees = mm_to_wheel_degrees(MAX_APPROACH_MM)
-    while not out_of_time():
-        if drive_position() - start > max_degrees:
-            return False
-        if not sees_blue():
-            stop_drive()
-            wait(50, MSEC)
-            if not sees_blue_confirmed():
-                # lost it - sweep a little to find it again, then re-center
-                if not small_sweep_for_blue() or not align_on_blue():
-                    return False
-                status("Approaching...")
-        # optical sensor is very close and still blue -> we're there
-        if optical.brightness() >= NEAR_BRIGHTNESS and sees_blue():
-            stop_drive()
-            return True
-        drive(APPROACH_SPEED)
-        wait(20, MSEC)
-    stop_drive()
-    return False
-
-
-def small_sweep_for_blue():
-    """Look left and right a little to re-find the object."""
-    status("Re-finding blue...")
-    center = turn_position()
-    sweep = mm_to_wheel_degrees(60)
-    for target in (center - sweep, center + sweep):
-        direction = 1 if target > turn_position() else -1
-        turn(ALIGN_TURN_SPEED * direction)
-        while not out_of_time() and (target - turn_position()) * direction > 0:
-            if sees_blue_confirmed():
-                stop_drive()
-                return True
-            wait(10, MSEC)
-        stop_drive()
-    turn_to(center, ALIGN_TURN_SPEED)
-    return False
-
-
-def open_claw():
-    status("Opening claw...")
-    claw.set_max_torque(100, PERCENT)
-    move_motor_to(claw, CLAW_OPEN_DEGREES)
-
-
-def creep_in():
-    """Drive very slowly so the object slides into the open claw."""
-    status("Creeping in...")
-    drive_distance(CREEP_DISTANCE_MM, CREEP_SPEED)
-    wait(150, MSEC)
-
-
-def close_claw():
-    status("Grabbing!")
-    claw.set_max_torque(CLAW_GRIP_TORQUE, PERCENT)
-    # Close until the claw squeezes the object (the motor stalls) or times out
-    claw.spin(REVERSE, CLAW_SPEED, PERCENT)
-    wait(300, MSEC)
-    while not out_of_time() and abs(claw.velocity(PERCENT)) > 2:
-        wait(20, MSEC)
-    # HOLD keeps squeezing the object
-    claw.stop()
-
-
-def lift_arm():
-    status("Lifting...")
-    move_motor_to(arm, ARM_LIFT_ANGLE)
 
 
 def stop_everything():
     stop_drive()
     arm.stop()
     claw.stop()
-
-
-def reset_for_retry():
-    """Close the claw and put the arm back down before trying again."""
-    stop_drive()
-    claw.set_max_torque(100, PERCENT)
-    move_motor_to(claw, 0)
-    move_motor_to(arm, ARM_GRAB_ANGLE)
 
 
 def watchdog():
@@ -367,60 +169,139 @@ def watchdog():
 
 
 # ===========================================================================
-#  AUTONOMOUS (30 seconds)
+#  AUTONOMOUS STEPS
 # ===========================================================================
-def try_to_grab():
-    """One full attempt: find, line up, approach, grab. True if it grabbed."""
-    if not search_for_blue():
-        return False
-    if not align_on_blue():
-        return False
-    if not approach_blue():
-        return False
+def setup():
+    brain.timer.clear()
 
-    # Final re-center right in front of the object before opening the claw
-    if not sees_blue_confirmed():
-        small_sweep_for_blue()
-    if not align_on_blue():
-        return False
+    left_drive.set_stopping(BRAKE)
+    right_drive.set_stopping(BRAKE)
+    arm.set_stopping(HOLD)
+    claw.set_stopping(HOLD)
+    claw.set_velocity(CLAW_SPEED, PERCENT)
 
-    # 1) open the claw  2) creep in slowly  3) close the claw
-    open_claw()
-    creep_in()
-    close_claw()
+    # The robot should START with the arm down and the claw closed.
+    arm.set_position(0, DEGREES)
+    claw.set_position(0, DEGREES)
+    left_drive.set_position(0, DEGREES)
+    right_drive.set_position(0, DEGREES)
+    arm.stop()   # hold the arm down where it is
+
+    # Turn on the sensor's light so colors read the same in any room lighting
+    optical.set_light(LedStateType.ON)
+    optical.set_light_power(100, PERCENT)
+    wait(100, MSEC)
+
+
+def open_claw():
+    status("Opening claw")
+    claw.set_max_torque(100, PERCENT)
+    move_motor_to(claw, CLAW_OPEN_DEGREES)
+
+
+def turn_until_blue():
+    """Spin in place until the sensor sees blue, then stop right away."""
+    status("Turning - looking for blue")
+    direction = 1 if TURN_RIGHT else -1
+    turn(SEARCH_TURN_SPEED * direction)
+    while not out_of_time():
+        if sees_blue_confirmed():
+            stop_drive()
+            return True
+        wait(10, MSEC)
+    stop_drive()
+    return False
+
+
+def face_blue():
+    """The robot can coast a little past the object while braking. If the
+    sensor no longer sees blue, swing back slowly until it does."""
+    wait(100, MSEC)   # let the robot settle
+    if sees_blue():
+        return True
+    status("Swinging back to blue")
+    direction = -1 if TURN_RIGHT else 1
+    start = turn_position()
+    limit = mm_to_wheel_degrees(60)   # don't swing back more than a little
+    turn(NUDGE_TURN_SPEED * direction)
+    while not out_of_time() and abs(turn_position() - start) < limit:
+        if sees_blue():
+            stop_drive()
+            return True
+        wait(10, MSEC)
+    stop_drive()
+    return False
+
+
+def drive_to_blue():
+    """Drive straight until the object is right in front of the claw, then stop."""
+    status("Driving to blue")
+    start = drive_position()
+    limit = mm_to_wheel_degrees(MAX_DRIVE_MM)
+    drive(DRIVE_SPEED)
+    while not out_of_time():
+        if optical.is_near_object():
+            break
+        if drive_position() - start > limit:
+            stop_drive()
+            return False
+        wait(10, MSEC)
+    stop_drive()
+
+    if EXTRA_DRIVE_MM > 0 and not out_of_time():
+        target = drive_position() + mm_to_wheel_degrees(EXTRA_DRIVE_MM)
+        drive(EXTRA_DRIVE_SPEED)
+        while not out_of_time() and drive_position() < target:
+            wait(10, MSEC)
+        stop_drive()
+
     return not out_of_time()
 
 
+def close_claw():
+    status("Closing claw")
+    claw.set_max_torque(CLAW_GRIP_TORQUE, PERCENT)
+    # Close until the claw squeezes the object (the motor stalls)
+    claw.spin(REVERSE, CLAW_SPEED, PERCENT)
+    start = brain.timer.time(MSEC)
+    wait(300, MSEC)
+    while not out_of_time() and abs(claw.velocity(PERCENT)) > 2:
+        if brain.timer.time(MSEC) - start > 2000:
+            break
+        wait(20, MSEC)
+    claw.stop()   # HOLD keeps squeezing the object
+
+
+# ===========================================================================
+#  AUTONOMOUS (30 seconds max)
+# ===========================================================================
 def autonomous():
     setup()
     Thread(watchdog)
 
-    # Keep trying for the whole 30 seconds - if something goes wrong
-    # (lost the blue, couldn't line up) reset and start over.
-    attempt = 1
-    grabbed = False
+    # 1) start with the claw open
+    open_claw()
+
     while not out_of_time():
-        status("Attempt %d" % attempt)
-        if try_to_grab():
-            grabbed = True
+        # 2) turn UNTIL blue is seen, then stop
+        if not turn_until_blue():
             break
-        if out_of_time():
+        if not face_blue():
+            continue   # coasted off it and couldn't find it again - keep turning
+
+        # 3) drive straight at it and 4) stop when it's in the claw
+        if drive_to_blue():
+            if CLOSE_CLAW_AT_END:
+                close_claw()
+            status("Got it!")
             break
-        status("Missed - retrying")
-        reset_for_retry()
-        attempt += 1
+        # drove too far without reaching it - go back to searching
 
-    if grabbed:
-        if LIFT_AFTER_GRAB:
-            lift_arm()
-        stop_drive()
-        status("Got it!")
-        # Keep squeezing the object until the 30 seconds are over
-        while not out_of_time():
-            wait(20, MSEC)
-
+    stop_drive()
+    # Keep holding the claw shut until the 30 seconds are over
+    while not out_of_time():
+        wait(20, MSEC)
     stop_everything()
-    status("Auton done")
 
 
 # ===========================================================================
