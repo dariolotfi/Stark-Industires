@@ -9,8 +9,24 @@
 #    5. close the claw and stop
 #  Everything stops at 30 seconds no matter what.
 #
-#  Written for VEXcode EXP (Python).  Paste into a new VEXcode EXP Python
-#  project and download it to the brain.
+#  HOW TO USE (VEXcode EXP, Python):
+#    1. Make a new Python project. Press Ctrl/Cmd+A then Delete so the
+#       editor is completely empty.
+#    2. Paste ALL of this file in, starting at line 1.
+#    3. Change the ports in CONFIGURATION below to match your robot.
+#    4. Start the robot with the arm DOWN and the claw CLOSED.
+#    5. Put the blue object within about 10-20 cm in front of the robot -
+#       the optical sensor can only see color up close.
+#
+#  TUNING (the brain screen shows hue, brightness and "BLUE: YES/no"):
+#    - SENSOR_TEST_MODE = True -> robot does not move, screen shows what the
+#      sensor sees. Hold the blue object in front of it. Set back to False.
+#    - BLUE_HUE_MIN / BLUE_HUE_MAX -> match the hue your blue object shows.
+#    - MIN_BRIGHTNESS -> lower it if the sensor won't say BLUE on your object.
+#    - EXTRA_DRIVE_MM -> raise it if the robot stops before the object is
+#      between the claw fingers.
+#    - TURN_RIGHT_FIRST / SWEEP_HALF_ANGLE / STEP_ANGLE -> how it searches.
+#    - *_REVERSED -> flip if a motor turns the wrong way.
 # ---------------------------------------------------------------------------
 from vex import *
 
