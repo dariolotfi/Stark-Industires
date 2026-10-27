@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-#  Stark Industries - VEX EXP Clawbot          (version v6 - step search)
+#  Stark Industries - VEX EXP Clawbot          (version v7 - finds optical port)
 #  30-second autonomous:
 #    1. open the claw
 #    2. look straight ahead, then turn a small step at a time - right, then
@@ -15,10 +15,12 @@
 #       editor is completely empty.
 #    2. Paste ALL of this file in, starting at line 1.
 #    3. Change the ports in CONFIGURATION below to match your robot.
+#       (If the optical sensor isn't on OPTICAL_PORT, the code finds it on
+#       any other port by itself - the screen shows which port it's using.)
 #    4. Start the robot with the arm DOWN and the claw CLOSED.
 #    5. Put the blue object within about 10-20 cm in front of the robot -
 #       the optical sensor can only see color up close.
-#    The brain screen starts with "[v6]" - if it doesn't, you're running
+#    The brain screen starts with "[v7]" - if it doesn't, you're running
 #    an old version of the code.
 #
 #  TUNING (the brain screen shows hue, brightness and "BLUE: YES/no"):
@@ -37,7 +39,8 @@ from vex import *
 # ===========================================================================
 #  CONFIGURATION - change these to match YOUR robot
 # ===========================================================================
-# Ports - CHECK THESE. If OPTICAL_PORT is wrong the robot never sees blue.
+# Ports - CHECK THESE. (If OPTICAL_PORT is wrong, the code searches the
+# other ports for the optical sensor by itself.)
 LEFT_DRIVE_PORT = Ports.PORT6     # back-left wheel motor
 RIGHT_DRIVE_PORT = Ports.PORT10   # back-right wheel motor
 ARM_PORT = Ports.PORT3            # arm (up / down) motor
@@ -97,7 +100,7 @@ CLAW_SPEED = 50                   # percent
 CLAW_GRIP_TORQUE = 50             # percent torque used to squeeze the object
 CLOSE_CLAW_AT_END = True          # close the claw on the object once the robot has stopped
 
-VERSION = "v6"
+VERSION = "v7"
 
 
 # ===========================================================================
@@ -110,7 +113,46 @@ left_drive = Motor(LEFT_DRIVE_PORT)
 right_drive = Motor(RIGHT_DRIVE_PORT)
 arm = Motor(ARM_PORT)
 claw = Motor(CLAW_PORT)
-optical = Optical(OPTICAL_PORT)
+
+
+def port_number(port):
+    """Turn Ports.PORT5 into 5 (for showing on the screen)."""
+    for n in range(1, 13):
+        if getattr(Ports, "PORT%d" % n, None) == port:
+            return n
+    return 0
+
+
+def is_plugged_in(sensor):
+    """True/False if VEXcode can tell, None if this version can't check."""
+    try:
+        return sensor.installed()
+    except AttributeError:
+        return None
+
+
+def find_optical():
+    """Use the optical sensor on OPTICAL_PORT. If nothing is plugged in
+    there, look on every other port for it, so a wrong OPTICAL_PORT
+    setting can't stop the sensor from working.
+    Returns (sensor, port number, found?)."""
+    wait(200, MSEC)   # give the brain a moment to see every device
+    sensor = Optical(OPTICAL_PORT)
+    if is_plugged_in(sensor) is not False:
+        return sensor, port_number(OPTICAL_PORT), True
+    motor_ports = (LEFT_DRIVE_PORT, RIGHT_DRIVE_PORT, ARM_PORT, CLAW_PORT)
+    for n in range(1, 13):
+        port = getattr(Ports, "PORT%d" % n, None)
+        if port is None or port == OPTICAL_PORT or port in motor_ports:
+            continue
+        candidate = Optical(port)
+        if is_plugged_in(candidate):
+            return candidate, n, True
+    # Not found anywhere - still use OPTICAL_PORT and try anyway
+    return sensor, port_number(OPTICAL_PORT), False
+
+
+optical, optical_port, optical_found = find_optical()
 
 
 # ===========================================================================
@@ -168,7 +210,7 @@ def status(line):
     brain.screen.set_cursor(1, 1)
     brain.screen.print("[%s] %s" % (VERSION, line))
     brain.screen.next_row()
-    brain.screen.print("Time left: %.1f" % max(0, time_left()))
+    brain.screen.print("%.1fs left  port %d" % (max(0, time_left()), optical_port))
     brain.screen.next_row()
     # handy for tuning BLUE_HUE_MIN/MAX and MIN_BRIGHTNESS
     brain.screen.print("Hue %d Bright %d" % (int(optical.hue()), int(optical.brightness())))
@@ -252,13 +294,6 @@ def stop_everything():
     stop_drive()
     arm.stop()
     claw.stop()
-
-
-def optical_connected():
-    try:
-        return optical.installed()
-    except AttributeError:
-        return True   # this VEXcode version can't check - assume it's there
 
 
 def watchdog():
@@ -447,9 +482,10 @@ def close_claw():
 # ===========================================================================
 def autonomous():
     setup()
-    if not optical_connected():
-        status("NO OPTICAL SENSOR - check OPTICAL_PORT")
-        return
+    if not optical_found:
+        # Don't give up - just warn on the screen and keep going
+        status("No optical found!")
+        wait(500, MSEC)
     Thread(watchdog)
 
     # 1) start with the claw open
@@ -489,14 +525,13 @@ def sensor_test():
         brain.screen.set_cursor(1, 1)
         brain.screen.print("[%s] SENSOR TEST - no driving" % VERSION)
         brain.screen.next_row()
-        if not optical_connected():
-            brain.screen.print("NO OPTICAL SENSOR on port")
-        else:
-            brain.screen.print("Hue %d Bright %d" % (int(optical.hue()), int(optical.brightness())))
-            brain.screen.next_row()
-            brain.screen.print("Near: %s" % ("YES" if optical.is_near_object() else "no"))
-            brain.screen.next_row()
-            brain.screen.print("BLUE: %s" % ("YES" if sees_blue() else "no"))
+        brain.screen.print("Optical port %d %s" % (optical_port, "" if optical_found else "NOT FOUND"))
+        brain.screen.next_row()
+        brain.screen.print("Hue %d Bright %d" % (int(optical.hue()), int(optical.brightness())))
+        brain.screen.next_row()
+        brain.screen.print("Near: %s" % ("YES" if optical.is_near_object() else "no"))
+        brain.screen.next_row()
+        brain.screen.print("BLUE: %s" % ("YES" if sees_blue() else "no"))
         wait(200, MSEC)
 
 
