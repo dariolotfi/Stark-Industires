@@ -1,5 +1,9 @@
 # ---------------------------------------------------------------------------
 #  Stark Industries - VEX EXP Clawbot          (version v7 - finds optical port)
+#
+#  Latest version of this code (open, Cmd/Ctrl+A, copy, paste into VEXcode):
+#  https://raw.githubusercontent.com/dariolotfi/Stark-Industires/claude/eager-pascal-rhmqxo/src/main.py
+#
 #  30-second autonomous:
 #    1. open the claw
 #    2. look straight ahead, then turn a small step at a time - right, then
