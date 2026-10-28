@@ -1,15 +1,17 @@
 # ---------------------------------------------------------------------------
-#  Stark Industries - VEX EXP Clawbot          (version v8 - no spinning)
+#  Stark Industries - VEX EXP Clawbot          (version v9 - spin, drive, grab, lift)
 #
 #  Latest version of this code (open, Cmd/Ctrl+A, copy, paste into VEXcode):
 #  https://raw.githubusercontent.com/dariolotfi/Stark-Industires/claude/eager-pascal-rhmqxo/src/main.py
 #
-#  30-second autonomous - the robot NEVER turns or spins:
-#    1. open the claw
-#    2. drive slowly STRAIGHT forward, watching the optical sensor
-#    3. the moment it sees BLUE, stop
-#    4. creep straight forward until the object is right at the claw, stop
-#    5. close the claw and stop
+#  30-second autonomous, in this order:
+#    0. open the claw (so it can close around the object later)
+#    1. spin in a circle until the optical sensor detects BLUE
+#    2. stop the motors immediately
+#    3. drive forward until the blue object is within 2 inches,
+#       or until blue can't be detected anymore
+#    4. close the claw
+#    5. lift the claw arm
 #  Everything stops at 30 seconds no matter what.
 #
 #  HOW TO USE (VEXcode EXP, Python):
@@ -19,21 +21,20 @@
 #    3. Change the ports in CONFIGURATION below to match your robot.
 #       (If the optical sensor isn't on OPTICAL_PORT, the code finds it on
 #       any other port by itself - the screen shows which port it's using.)
-#    4. Start the robot with the arm DOWN and the claw CLOSED,
-#       pointed straight at the blue object.
-#    The brain screen starts with "[v8]" - if it doesn't, you're running
+#    4. Start the robot with the arm DOWN and the claw CLOSED.
+#    The brain screen starts with "[v9]" - if it doesn't, you're running
 #    an old version of the code.
 #
 #  TUNING (the brain screen shows hue, brightness and "BLUE: YES/no"):
 #    - SENSOR_TEST_MODE = True -> robot does not move, screen shows what the
 #      sensor sees. Hold the blue object in front of it. Set back to False.
 #    - BLUE_HUE_MIN / BLUE_HUE_MAX -> the hue range counted as blue.
-#    - If the robot stops at an object and the screen says "NOT BLUE",
-#      it shows that object's hue - widen BLUE_HUE_MIN/MAX to include it.
-#    - EXTRA_DRIVE_MM -> raise it if the robot stops before the object is
-#      between the claw fingers.
-#    - If the robot spins in place instead of driving straight, flip
-#      RIGHT_DRIVE_REVERSED (or LEFT_DRIVE_REVERSED).
+#    - NEAR_BRIGHTNESS -> to make the robot stop at exactly 2 inches: in
+#      sensor test mode, hold the object 2 inches away, read "Bright", and
+#      put that number here. (0 = just use the sensor's "Near" signal.)
+#    - ARM_LIFT_DEGREES -> how high the arm lifts.
+#    - If the robot drives when it should spin (or spins when it should
+#      drive), flip RIGHT_DRIVE_REVERSED.
 # ---------------------------------------------------------------------------
 from vex import *
 
@@ -49,18 +50,17 @@ CLAW_PORT = Ports.PORT4           # claw (open / close) motor
 OPTICAL_PORT = Ports.PORT2        # optical sensor (mounted at the front, facing forward,
                                   # centered with the claw)
 
-# Motor directions - if the robot spins when it should drive straight,
-# flip RIGHT_DRIVE_REVERSED. If it drives backwards, flip both.
+# Motor directions - flip if that motor turns the wrong way
 LEFT_DRIVE_REVERSED = False
 RIGHT_DRIVE_REVERSED = True
-CLAW_REVERSED = False
+ARM_REVERSED = False              # flip if the arm goes DOWN when it should lift
+CLAW_REVERSED = False             # flip if the claw closes when it should open
 
-# Wheel size (only used for the "drive this far" distances)
+# Wheel size (only used for the "drive this far" safety limit)
 WHEEL_TRAVEL_MM = 200.0           # distance the wheel rolls in one full turn
 
 # Sensor test mode: set to True, download, and the robot will NOT move. The
-# screen just shows what the optical sensor reads. Hold your blue object in
-# front of it to check the hue, then set back to False.
+# screen just shows what the optical sensor reads. Set back to False after.
 SENSOR_TEST_MODE = False
 
 # Timing
@@ -68,28 +68,33 @@ AUTON_TIME_LIMIT_S = 30.0         # the autonomous can never run longer than thi
 
 # Blue detection. Hue is a color wheel from 0-360:
 #   red ~0, yellow ~60, green ~120, cyan ~180, BLUE ~200-250, purple ~280
-# This range is wide so that light blue, dark blue and blue-purple all count.
 BLUE_HUE_MIN = 165
 BLUE_HUE_MAX = 275
 MIN_BRIGHTNESS = 1                # below this the sensor is seeing nothing at all
-CONFIRM_READINGS = 3              # readings in a row needed to trust "blue"
+CONFIRM_READINGS = 2              # readings in a row needed to trust "blue"
 
-# Driving (straight only - the robot never turns)
-SEARCH_SPEED = 20                 # percent - slow drive forward while looking for blue
-APPROACH_SPEED = 10               # percent - creep speed once blue is seen
-STRAIGHT_FIX = 0.5                # how hard to correct if one wheel gets ahead (keeps it straight)
-MAX_SEARCH_MM = 1500              # stop if no blue has been seen after driving this far
-MAX_APPROACH_MM = 400             # stop if the object isn't reached after this far
-EXTRA_DRIVE_MM = 0                # drive this much further AFTER the sensor says the object is
-                                  # close. Raise it if the robot stops before the object is
-                                  # between the claw fingers; keep 0 if it is already inside.
+# Step 1 - spinning
+SPIN_RIGHT = True                 # True = spin clockwise, False = counter-clockwise
+SPIN_SPEED = 15                   # percent - slower = stops closer to the blue object
+SWING_BACK_MS = 500               # if it slides past the blue while stopping, swing back
+                                  # slowly for up to this long to find it again
 
-# Claw
+# Step 3 - driving forward
+DRIVE_SPEED = 15                  # percent
+NEAR_BRIGHTNESS = 0               # 0 = stop when the sensor says "Near" (about 1-2 inches).
+                                  # Set to the brightness at exactly 2 inches to stop there.
+LOST_READINGS = 10                # readings in a row without blue = "can't detect" (10 = 0.1 s)
+MAX_DRIVE_MM = 1000               # safety: never drive further than this
+STRAIGHT_FIX = 0.5                # keeps the robot driving straight
+
+# Steps 4 and 5 - claw and arm
 CLAW_OPEN_DEGREES = 90            # how far the claw motor turns to open
 CLAW_SPEED = 50                   # percent
 CLAW_GRIP_TORQUE = 50             # percent torque used to squeeze the object
+ARM_LIFT_DEGREES = 300            # how far the arm motor turns to lift
+ARM_SPEED = 50                    # percent
 
-VERSION = "v8"
+VERSION = "v9"
 
 
 # ===========================================================================
@@ -174,6 +179,15 @@ def motor_position(motor, reversed_):
     return -p if reversed_ else p
 
 
+def move_motor_to(motor, reversed_, degrees):
+    """Turn the claw or arm motor to a position, giving up after 2 s."""
+    motor.spin_to_position(-degrees if reversed_ else degrees, DEGREES, wait=False)
+    start = now_ms()
+    while not out_of_time() and not motor.is_done() and now_ms() - start < 2000:
+        wait(10, MSEC)
+    motor.stop()
+
+
 def sees_blue():
     """One reading: is the sensor looking at something blue?"""
     if optical.brightness() < MIN_BRIGHTNESS:
@@ -192,6 +206,12 @@ def sees_blue_confirmed():
             return False
         wait(10, MSEC)
     return True
+
+
+def within_2_inches():
+    if NEAR_BRIGHTNESS > 0 and optical.brightness() >= NEAR_BRIGHTNESS:
+        return True
+    return optical.is_near_object()
 
 
 def status(line):
@@ -220,17 +240,15 @@ def mm_to_wheel_degrees(mm):
     return mm / WHEEL_TRAVEL_MM * 360.0
 
 
-def left_pos():
-    return motor_position(left_drive, LEFT_DRIVE_REVERSED)
-
-
-def right_pos():
-    return motor_position(right_drive, RIGHT_DRIVE_REVERSED)
-
-
 def stop_drive():
     left_drive.stop()
     right_drive.stop()
+
+
+def spin(speed):
+    """Spin in place. Positive = clockwise."""
+    run_motor(left_drive, LEFT_DRIVE_REVERSED, speed)
+    run_motor(right_drive, RIGHT_DRIVE_REVERSED, -speed)
 
 
 class StraightDrive:
@@ -239,16 +257,22 @@ class StraightDrive:
     going straight instead of curving."""
 
     def __init__(self):
-        self.left_start = left_pos()
-        self.right_start = right_pos()
+        self.left_start = motor_position(left_drive, LEFT_DRIVE_REVERSED)
+        self.right_start = motor_position(right_drive, RIGHT_DRIVE_REVERSED)
+
+    def progress(self):
+        left = motor_position(left_drive, LEFT_DRIVE_REVERSED) - self.left_start
+        right = motor_position(right_drive, RIGHT_DRIVE_REVERSED) - self.right_start
+        return left, right
 
     def distance(self):
         """How far we've driven since starting, in wheel degrees."""
-        return ((left_pos() - self.left_start) + (right_pos() - self.right_start)) / 2.0
+        left, right = self.progress()
+        return (left + right) / 2.0
 
     def go(self, speed):
-        ahead = (left_pos() - self.left_start) - (right_pos() - self.right_start)
-        fix = max(-speed / 2.0, min(speed / 2.0, ahead * STRAIGHT_FIX))
+        left, right = self.progress()
+        fix = max(-speed / 2.0, min(speed / 2.0, (left - right) * STRAIGHT_FIX))
         run_motor(left_drive, LEFT_DRIVE_REVERSED, speed - fix)
         run_motor(right_drive, RIGHT_DRIVE_REVERSED, speed + fix)
 
@@ -274,10 +298,12 @@ def watchdog():
 def setup():
     brain.timer.clear()
 
-    left_drive.set_stopping(BRAKE)
-    right_drive.set_stopping(BRAKE)
+    # HOLD = the wheels lock in place the instant they're told to stop
+    left_drive.set_stopping(HOLD)
+    right_drive.set_stopping(HOLD)
     arm.set_stopping(HOLD)
     claw.set_stopping(HOLD)
+    arm.set_velocity(ARM_SPEED, PERCENT)
     claw.set_velocity(CLAW_SPEED, PERCENT)
 
     # The robot should START with the arm down and the claw closed.
@@ -294,76 +320,66 @@ def setup():
 def open_claw():
     status("Opening claw")
     claw.set_max_torque(100, PERCENT)
-    target = -CLAW_OPEN_DEGREES if CLAW_REVERSED else CLAW_OPEN_DEGREES
-    claw.spin_to_position(target, DEGREES, wait=False)
-    start = now_ms()
-    while not out_of_time() and not claw.is_done() and now_ms() - start < 2000:
-        wait(10, MSEC)
-    claw.stop()
+    move_motor_to(claw, CLAW_REVERSED, CLAW_OPEN_DEGREES)
 
 
-def drive_until_blue():
-    """Drive slowly straight forward until the sensor sees blue, then stop
-    right away. Returns:
-      "blue"     - saw blue
-      "not blue" - bumped right up to something that isn't blue
-      "nothing"  - drove MAX_SEARCH_MM (or ran out of time) without seeing blue"""
-    status("Driving - looking")
-    robot = StraightDrive()
-    limit = mm_to_wheel_degrees(MAX_SEARCH_MM)
-    near_not_blue = 0
+def spin_until_blue():
+    """Step 1 + 2: spin in a circle until blue is detected, then stop the
+    motors immediately. Returns True once the robot is stopped facing blue."""
+    direction = 1 if SPIN_RIGHT else -1
     while not out_of_time():
+        spin(SPIN_SPEED * direction)
         if sees_blue():
-            stop_drive()
+            stop_drive()                     # stop the motors immediately
+            wait(50, MSEC)
             if sees_blue_confirmed():
-                return "blue"
-        # something is right in front but it isn't blue - don't push it
-        if optical.is_near_object() and not sees_blue():
-            near_not_blue += 1
-            if near_not_blue >= CONFIRM_READINGS:
-                stop_drive()
-                return "not blue"
-        else:
-            near_not_blue = 0
-        if robot.distance() > limit:
-            break
-        robot.go(SEARCH_SPEED)
-        show_live("Driving - looking")
+                return True
+            # Slid a little past it while stopping - swing back slowly
+            start = now_ms()
+            spin(-SPIN_SPEED / 2.0 * direction)
+            while not out_of_time() and now_ms() - start < SWING_BACK_MS:
+                if sees_blue():
+                    stop_drive()
+                    if sees_blue_confirmed():
+                        return True
+                    spin(-SPIN_SPEED / 2.0 * direction)
+                wait(10, MSEC)
+            stop_drive()
+            # just a flicker - keep spinning
+        show_live("Spinning - looking")
         wait(10, MSEC)
     stop_drive()
-    return "nothing"
+    return False
 
 
-def creep_to_object():
-    """Blue was seen - creep straight forward until the object is right in
-    front of the claw, then stop."""
-    status("Blue! Moving in")
-    wait(200, MSEC)
+def drive_to_blue():
+    """Step 3: drive forward until the blue object is within 2 inches, or
+    until blue can't be detected anymore. Then stop."""
+    status("Driving to blue")
     robot = StraightDrive()
-    limit = mm_to_wheel_degrees(MAX_APPROACH_MM)
+    limit = mm_to_wheel_degrees(MAX_DRIVE_MM)
+    lost = 0
     while not out_of_time():
-        if optical.is_near_object():
+        if within_2_inches():
             break
+        if sees_blue():
+            lost = 0
+        else:
+            lost += 1
+            if lost >= LOST_READINGS:
+                break                        # blue can't be detected anymore
         if robot.distance() > limit:
             break
-        robot.go(APPROACH_SPEED)
-        show_live("Blue! Moving in")
+        robot.go(DRIVE_SPEED)
+        show_live("Driving to blue")
         wait(10, MSEC)
     stop_drive()
-
-    if EXTRA_DRIVE_MM > 0 and not out_of_time():
-        robot = StraightDrive()
-        target = mm_to_wheel_degrees(EXTRA_DRIVE_MM)
-        while not out_of_time() and robot.distance() < target:
-            robot.go(APPROACH_SPEED)
-            wait(10, MSEC)
-        stop_drive()
 
 
 def close_claw():
+    """Step 4: close the claw until it squeezes the object."""
     status("Closing claw")
     claw.set_max_torque(CLAW_GRIP_TORQUE, PERCENT)
-    # Close until the claw squeezes the object (the motor stalls)
     run_motor(claw, CLAW_REVERSED, -CLAW_SPEED)
     start = now_ms()
     wait(300, MSEC)
@@ -372,6 +388,13 @@ def close_claw():
             break
         wait(20, MSEC)
     claw.stop()   # HOLD keeps squeezing the object
+
+
+def lift_arm():
+    """Step 5: lift the claw arm."""
+    status("Lifting arm")
+    arm.set_max_torque(100, PERCENT)
+    move_motor_to(arm, ARM_REVERSED, ARM_LIFT_DEGREES)
 
 
 # ===========================================================================
@@ -385,35 +408,20 @@ def autonomous():
         wait(500, MSEC)
     Thread(watchdog)
 
-    # 1) start with the claw open
-    open_claw()
+    open_claw()                     # 0. open the claw
 
-    # 2) + 3) drive straight until blue is seen, then stop
-    result = drive_until_blue()
-
-    if result == "blue":
-        # 4) creep straight in until it's at the claw, stop
-        creep_to_object()
-        # 5) close the claw
+    if spin_until_blue():           # 1. spin until blue  2. stop immediately
+        drive_to_blue()             # 3. drive until within 2 in / blue lost
         if not out_of_time():
-            close_claw()
-        stop_drive()
-        status("Got it!")
-    elif result == "not blue":
-        hue = int(optical.hue())
-        stop_drive()
-        brain.screen.clear_screen()
-        brain.screen.set_cursor(1, 1)
-        brain.screen.print("[%s] Object NOT BLUE" % VERSION)
-        brain.screen.next_row()
-        brain.screen.print("Its hue: %d" % hue)
-        brain.screen.next_row()
-        brain.screen.print("Blue range: %d-%d" % (BLUE_HUE_MIN, BLUE_HUE_MAX))
+            close_claw()            # 4. close the claw
+        if not out_of_time():
+            lift_arm()              # 5. lift the arm
+        status("Done!")
     else:
         status("No blue found")
 
     stop_drive()
-    # Keep holding the claw shut until the 30 seconds are over
+    # Keep holding the object up until the 30 seconds are over
     while not out_of_time():
         wait(20, MSEC)
     stop_everything()
