@@ -18,9 +18,9 @@
 #    1. Make a new Python project. Press Ctrl/Cmd+A then Delete so the
 #       editor is completely empty.
 #    2. Paste ALL of this file in, starting at line 1.
-#    3. Change the ports in CONFIGURATION below to match your robot.
-#       (If the optical sensor isn't on OPTICAL_PORT, the code finds it on
-#       any other port by itself - the screen shows which port it's using.)
+#    3. Ports are already set for our robot: optical 1, claw 2, claw arm 5,
+#       left drive 6, right drive 10. Change them in CONFIGURATION if you
+#       ever move a cable.
 #    4. Start the robot with the arm DOWN and the claw CLOSED.
 #    The brain screen starts with "[v9]" - if it doesn't, you're running
 #    an old version of the code.
@@ -41,14 +41,14 @@ from vex import *
 # ===========================================================================
 #  CONFIGURATION - change these to match YOUR robot
 # ===========================================================================
-# Ports - CHECK THESE. (If OPTICAL_PORT is wrong, the code searches the
-# other ports for the optical sensor by itself.)
+# Ports on our robot. (If OPTICAL_PORT is ever wrong, the code searches
+# the other ports for the optical sensor by itself.)
+OPTICAL_PORT = Ports.PORT1        # optical sensor (mounted at the front, facing forward,
+                                  # centered with the claw)
+CLAW_PORT = Ports.PORT2           # claw (open / close) motor
+ARM_PORT = Ports.PORT5            # claw arm (up / down) motor
 LEFT_DRIVE_PORT = Ports.PORT6     # back-left wheel motor
 RIGHT_DRIVE_PORT = Ports.PORT10   # back-right wheel motor
-ARM_PORT = Ports.PORT3            # arm (up / down) motor
-CLAW_PORT = Ports.PORT4           # claw (open / close) motor
-OPTICAL_PORT = Ports.PORT2        # optical sensor (mounted at the front, facing forward,
-                                  # centered with the claw)
 
 # Motor directions - flip if that motor turns the wrong way
 LEFT_DRIVE_REVERSED = False
