@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-#  Stark Industries - VEX EXP Clawbot - Autonomous   (version v13)
+#  Stark Industries - VEX EXP Clawbot - Autonomous   (version v14)
 #
 #  Latest version of this code (open, Cmd/Ctrl+A, copy, paste into VEXcode):
 #  https://raw.githubusercontent.com/dariolotfi/Stark-Industires/claude/eager-pascal-rhmqxo/src/main.py
@@ -26,11 +26,14 @@ brain = Brain()
 claw = Motor(Ports.PORT2)
 left_motor = Motor(Ports.PORT6)
 right_motor = Motor(Ports.PORT10)
-# The right motor is mounted facing the other way, so it spins REVERSE to
-# drive forward. If the robot spins in a circle instead of driving straight,
-# change RIGHT_FORWARD to FORWARD.
+# Which way each motor spins to drive the robot forward. On our robot both
+# drive motors spin FORWARD. If the robot spins in a circle instead of
+# driving straight, flip ONE of these. If it drives backwards, flip BOTH.
 LEFT_FORWARD = FORWARD
-RIGHT_FORWARD = REVERSE
+RIGHT_FORWARD = FORWARD
+# Which way the claw motor spins to OPEN. If the claw closes instead,
+# change this to FORWARD.
+CLAW_OPEN = REVERSE
 
 
 def time_left():
@@ -69,7 +72,7 @@ def countdown():
 def open_claw():
     show(1, "Opening claw")
     claw.set_velocity(CLAW_SPEED, PERCENT)
-    claw.spin_for(FORWARD, CLAW_OPEN_DEGREES, DEGREES, wait=False)
+    claw.spin_for(CLAW_OPEN, CLAW_OPEN_DEGREES, DEGREES, wait=False)
     # wait until it's open (or 2 seconds, in case the claw hits its stop)
     start = brain.timer.time(SECONDS)
     while not claw.is_done() and brain.timer.time(SECONDS) - start < 2:
