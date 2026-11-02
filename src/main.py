@@ -1,187 +1,108 @@
 # ---------------------------------------------------------------------------
-#  Stark Industries - VEX EXP Clawbot          (version v12 - drive, open claw, countdown)
+#  Stark Industries - VEX EXP Clawbot - Autonomous   (version v13)
 #
 #  Latest version of this code (open, Cmd/Ctrl+A, copy, paste into VEXcode):
 #  https://raw.githubusercontent.com/dariolotfi/Stark-Industires/claude/eager-pascal-rhmqxo/src/main.py
 #
-#  30-second autonomous:
-#    1. drive straight forward for 5 seconds, then stop
-#    2. open the claw
-#  The brain screen counts down the 30 seconds the whole time. When it
-#  reaches 0, every motor stops and the screen says "Auton over".
+#  What it does:
+#    1. opens the claw
+#    2. drives forward for 5 seconds, then stops
+#    The brain screen counts down from 30 the whole time. At 0 every motor
+#    stops and the screen says "Auton over".
 #
-#  HOW TO USE (VEXcode EXP, Python):
-#    1. Make a new Python project. Press Ctrl/Cmd+A then Delete so the
-#       editor is completely empty.
-#    2. Paste ALL of this file in, starting at line 1.
-#    3. Start the robot with the claw CLOSED.
-#    4. The brain screen shows "[v12]" - if it doesn't, you're running an
-#       old version of the code.
-#
-#  If the robot spins instead of driving straight, flip RIGHT_DRIVE_REVERSED.
-#  If it drives backwards, flip both LEFT_DRIVE_REVERSED and RIGHT_DRIVE_REVERSED.
-#  If the claw closes instead of opening, flip CLAW_REVERSED.
+#  Start the robot with the claw CLOSED.
 # ---------------------------------------------------------------------------
 from vex import *
 
-# ===========================================================================
-#  CONFIGURATION
-# ===========================================================================
-# Ports on our robot
-LEFT_DRIVE_PORT = Ports.PORT6     # back-left wheel motor
-RIGHT_DRIVE_PORT = Ports.PORT10   # back-right wheel motor
-CLAW_PORT = Ports.PORT2           # claw (open / close) motor
+# ----- Settings ------------------------------------------------------------
+AUTON_TIME = 30          # seconds in the autonomous period (the countdown)
+DRIVE_TIME = 5           # seconds to drive forward
+DRIVE_SPEED = 50         # percent
+CLAW_OPEN_DEGREES = 90   # how far the claw motor turns to open
+CLAW_SPEED = 50          # percent
 
-# Motor directions
-LEFT_DRIVE_REVERSED = False
-RIGHT_DRIVE_REVERSED = True
-CLAW_REVERSED = False
-
-AUTON_TIME_S = 30                 # length of the autonomous period (the countdown)
-
-DRIVE_TIME_S = 5.0                # how long to drive forward
-DRIVE_SPEED = 50                  # percent
-STRAIGHT_FIX = 0.5                # how hard to correct if one wheel gets ahead (keeps it straight)
-
-CLAW_OPEN_DEGREES = 90            # how far the claw motor turns to open
-CLAW_SPEED = 50                   # percent
-
-VERSION = "v12"
-
-
-# ===========================================================================
-#  DEVICES
-#  Motors are created with just a port; the *_REVERSED settings are handled
-#  below so they work the same on every VEXcode version.
-# ===========================================================================
+# ----- Devices (our robot's ports) -----------------------------------------
 brain = Brain()
-left_drive = Motor(LEFT_DRIVE_PORT)
-right_drive = Motor(RIGHT_DRIVE_PORT)
-claw = Motor(CLAW_PORT)
-
-
-# ===========================================================================
-#  HELPERS
-# ===========================================================================
-def seconds_since_start():
-    return brain.timer.time(SECONDS)
+claw = Motor(Ports.PORT2)
+left_motor = Motor(Ports.PORT6)
+right_motor = Motor(Ports.PORT10)
+# The right motor is mounted facing the other way, so it spins REVERSE to
+# drive forward. If the robot spins in a circle instead of driving straight,
+# change RIGHT_FORWARD to FORWARD.
+LEFT_FORWARD = FORWARD
+RIGHT_FORWARD = REVERSE
 
 
 def time_left():
-    return AUTON_TIME_S - seconds_since_start()
+    return AUTON_TIME - brain.timer.time(SECONDS)
 
 
-def out_of_time():
-    return time_left() <= 0
+def show(row, text):
+    brain.screen.clear_row(row)
+    brain.screen.set_cursor(row, 1)
+    brain.screen.print(text)
 
 
-def run_motor(motor, reversed_, speed):
-    """Spin a motor at a speed in percent. Negative = backwards."""
-    if reversed_:
-        speed = -speed
-    if speed >= 0:
-        motor.spin(FORWARD, speed, PERCENT)
-    else:
-        motor.spin(REVERSE, -speed, PERCENT)
-
-
-def motor_position(motor, reversed_):
-    p = motor.position(DEGREES)
-    return -p if reversed_ else p
-
-
-def status(line):
-    """Show what the robot is doing on row 1 (the countdown uses row 2)."""
-    brain.screen.clear_row(1)
-    brain.screen.set_cursor(1, 1)
-    brain.screen.print("[%s] %s" % (VERSION, line))
-
-
-def stop_everything():
-    left_drive.stop()
-    right_drive.stop()
+def stop_all_motors():
+    left_motor.stop()
+    right_motor.stop()
     claw.stop()
 
 
 def countdown():
-    """Runs in the background: shows the seconds left on row 2 of the
-    screen, and stops every motor the moment the 30 seconds are up."""
-    shown = -1
-    while True:
-        left = time_left()
-        # round UP so the screen shows 30, 29, ... 1, then 0 at the end
-        seconds = int(left) + (1 if left > int(left) else 0)
-        if seconds < 0:
-            seconds = 0
-        if seconds != shown:
-            shown = seconds
-            brain.screen.clear_row(2)
-            brain.screen.set_cursor(2, 1)
-            brain.screen.print("Time left: %d" % seconds)
-        if left <= 0:
-            stop_everything()
-            status("Auton over")
-            return
+    """Runs in the background: shows the seconds left on row 2, and stops
+    every motor when it reaches 0."""
+    last_shown = -1
+    while time_left() > 0:
+        seconds = int(time_left()) + 1     # 30, 29, ... 1
+        if seconds > AUTON_TIME:
+            seconds = AUTON_TIME
+        if seconds != last_shown:
+            show(2, "Time left: %d" % seconds)
+            last_shown = seconds
         wait(50, MSEC)
-
-
-# ===========================================================================
-#  AUTONOMOUS STEPS
-# ===========================================================================
-def drive_forward():
-    status("Driving forward")
-    start = seconds_since_start()
-    while seconds_since_start() - start < DRIVE_TIME_S and not out_of_time():
-        # If one wheel gets ahead of the other, slow it a little so the
-        # robot keeps going straight instead of curving.
-        ahead = (motor_position(left_drive, LEFT_DRIVE_REVERSED)
-                 - motor_position(right_drive, RIGHT_DRIVE_REVERSED))
-        fix = max(-DRIVE_SPEED / 2.0, min(DRIVE_SPEED / 2.0, ahead * STRAIGHT_FIX))
-        run_motor(left_drive, LEFT_DRIVE_REVERSED, DRIVE_SPEED - fix)
-        run_motor(right_drive, RIGHT_DRIVE_REVERSED, DRIVE_SPEED + fix)
-        wait(10, MSEC)
-    left_drive.stop()
-    right_drive.stop()
+    show(2, "Time left: 0")
+    stop_all_motors()
+    show(1, "Auton over")
 
 
 def open_claw():
-    status("Opening claw")
-    target = -CLAW_OPEN_DEGREES if CLAW_REVERSED else CLAW_OPEN_DEGREES
-    claw.spin_to_position(target, DEGREES, wait=False)
-    # Give up after 2 seconds so a claw that hits its stop can't stall forever
-    start = seconds_since_start()
-    while not claw.is_done() and seconds_since_start() - start < 2 and not out_of_time():
+    show(1, "Opening claw")
+    claw.set_velocity(CLAW_SPEED, PERCENT)
+    claw.spin_for(FORWARD, CLAW_OPEN_DEGREES, DEGREES, wait=False)
+    # wait until it's open (or 2 seconds, in case the claw hits its stop)
+    start = brain.timer.time(SECONDS)
+    while not claw.is_done() and brain.timer.time(SECONDS) - start < 2:
         wait(10, MSEC)
     claw.stop()   # HOLD keeps the claw open
 
 
-# ===========================================================================
-#  AUTONOMOUS (30 seconds)
-# ===========================================================================
-def autonomous():
-    left_drive.set_stopping(BRAKE)
-    right_drive.set_stopping(BRAKE)
-    left_drive.set_position(0, DEGREES)
-    right_drive.set_position(0, DEGREES)
-    claw.set_stopping(HOLD)
-    claw.set_velocity(CLAW_SPEED, PERCENT)
-    claw.set_position(0, DEGREES)   # the claw starts closed
-
-    brain.screen.clear_screen()
-    brain.timer.clear()             # the 30-second countdown starts now
-    Thread(countdown)
-
-    drive_forward()                 # 1. drive straight for 5 seconds, then stop
-    if not out_of_time():
-        open_claw()                 # 2. open the claw
-    if not out_of_time():
-        status("Done - waiting")
-
-    # Keep the program running until the countdown reaches 0
-    while not out_of_time():
-        wait(20, MSEC)
-    wait(100, MSEC)                 # let the countdown show 0 and stop the motors
-    stop_everything()
+def drive_forward():
+    show(1, "Driving forward")
+    left_motor.spin(LEFT_FORWARD, DRIVE_SPEED, PERCENT)
+    right_motor.spin(RIGHT_FORWARD, DRIVE_SPEED, PERCENT)
+    start = brain.timer.time(SECONDS)
+    while brain.timer.time(SECONDS) - start < DRIVE_TIME and time_left() > 0:
+        wait(10, MSEC)
+    left_motor.stop()
+    right_motor.stop()
 
 
-autonomous()
+# ----- Autonomous ----------------------------------------------------------
+left_motor.set_stopping(BRAKE)
+right_motor.set_stopping(BRAKE)
+claw.set_stopping(HOLD)
+
+brain.screen.clear_screen()
+brain.timer.clear()          # the 30-second countdown starts now
+Thread(countdown)
+
+open_claw()                  # 1. open the claw
+drive_forward()              # 2. drive forward for 5 seconds
+if time_left() > 0:
+    show(1, "Done")
+
+# keep the program running until the countdown hits 0
+while time_left() > 0:
+    wait(20, MSEC)
+wait(200, MSEC)
